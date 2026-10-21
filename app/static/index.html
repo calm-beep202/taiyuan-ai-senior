@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>泰院 AI 学长</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:#f0f2f5; }
+  header { position:fixed; top:0; width:100%; background:#fff; padding:12px 16px; text-align:center; box-shadow:0 1px 4px rgba(0,0,0,.08); font-weight:600; z-index:10; }
+  #chat { max-width:700px; margin:0 auto; padding:64px 12px 76px; }
+  .msg { display:flex; margin:10px 0; }
+  .msg .bubble { max-width:78%; padding:10px 14px; border-radius:12px; font-size:15px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+  .msg.user { justify-content:flex-end; }
+  .msg.user .bubble { background:#07c160; color:#fff; border-radius:12px 12px 2px 12px; }
+  .msg.bot .bubble { background:#fff; border-radius:12px 12px 12px 2px; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .avatar { width:36px; height:36px; border-radius:50%; background:#4a90d9; color:#fff; display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; margin-right:8px; }
+  footer { position:fixed; bottom:0; width:100%; background:#fff; padding:10px 12px; display:flex; gap:8px; box-shadow:0 -1px 4px rgba(0,0,0,.08); }
+  #input { flex:1; padding:10px 14px; border:1px solid #ddd; border-radius:20px; font-size:15px; outline:none; }
+  #send { padding:10px 20px; background:#07c160; color:#fff; border:none; border-radius:20px; font-size:15px; cursor:pointer; }
+  #send:disabled { background:#bbb; }
+  .typing { color:#999; font-size:13px; padding:4px 8px; }
+  .actions { margin:4px 0 0 44px; display:flex; gap:4px; }
+  .actions button { border:1px solid #ddd; background:#fff; border-radius:14px; padding:2px 10px; font-size:12px; color:#666; cursor:pointer; }
+  .actions button.on-up { background:#e8f7ee; color:#07c160; border-color:#07c160; }
+  .actions button.on-down { background:#fdecec; color:#e64340; border-color:#e64340; }
+  .actions button:disabled { opacity:.6; cursor:default; }
+</style>
+</head>
+<body>
+<header>🎓 泰院 AI 学长</header>
+<div id="chat">
+  <div class="msg bot"><div class="avatar">🎓</div><div class="bubble">你好呀，我是泰院 AI 学长！报到、宿舍、选课、资助……入学的事儿都可以问我。答不上来的，去新生群问学长学姐更靠谱～</div></div>
+</div>
+<footer>
+  <input id="input" placeholder="想问点什么？比如：助学贷款怎么申请" autocomplete="off">
+  <button id="send">发送</button>
+</footer>
+<script>
+const chatBox = document.getElementById('chat');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const history = [];  // 发给后端的消息历史，实现多轮上下文
+
+function addMsg(role, text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
+  if (role !== 'user') {
+    const av = document.createElement('div');
+    av.className = 'avatar';
+    av.textContent = '🎓';
+    wrap.appendChild(av);
+  }
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  b.textContent = text;
+  wrap.appendChild(b);
+  if (role === 'bot' && text.indexOf('网络出错') !== 0 && text.indexOf('出错了') !== 0) {
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const up = document.createElement('button');
+    up.textContent = '👍 有帮助';
+    const down = document.createElement('button');
+    down.textContent = '👎 没帮助';
+    // 点击后记录满意度（找到上一条用户消息作为问题）
+    const vote = async (rating, btn, otherBtn, cls) => {
+      btn.disabled = true; otherBtn.disabled = true;
+      btn.classList.add(cls);
+      const bubbles = chatBox.querySelectorAll('.msg.user .bubble');
+      const lastQ = bubbles.length ? bubbles[bubbles.length - 1].textContent : '';
+      try {
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rating: rating, question: lastQ }),
+        });
+      } catch (e) { /* 记录失败不影响使用 */ }
+    };
+    up.onclick = () => vote('up', up, down, 'on-up');
+    down.onclick = () => vote('down', down, up, 'on-down');
+    actions.appendChild(up);
+    actions.appendChild(down);
+    chatBox.appendChild(actions);
+  }
+  chatBox.appendChild(wrap);
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+function addTyping() {
+  const t = document.createElement('div');
+  t.className = 'typing';
+  t.id = 'typing';
+  t.textContent = '学长正在输入…';
+  chatBox.appendChild(t);
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+async function send() {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  addMsg('user', text);
+  history.push({ role: 'user', content: text });
+  addTyping();
+  sendBtn.disabled = true;
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history }),
+    });
+    const data = await resp.json();
+    const typing = document.getElementById('typing');
+    if (typing) typing.remove();
+    const reply = data.reply || ('出错了：' + (data.error || '未知错误'));
+    addMsg('bot', reply);
+    history.push({ role: 'assistant', content: reply });
+  } catch (e) {
+    const typing = document.getElementById('typing');
+    if (typing) typing.remove();
+    addMsg('bot', '网络出错了，稍后再试：' + e);
+  }
+  sendBtn.disabled = false;
+  input.focus();
+}
+
+sendBtn.onclick = send;
+input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+</script>
+</body>
+</html>
